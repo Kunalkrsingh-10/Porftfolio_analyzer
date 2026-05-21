@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pip list *)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(/home/akash-kumar/Desktop/laptop/skds/kalpi-ai/fastapi-be/.venv/bin/pip install *)",
+      "Bash(/home/akash-kumar/Desktop/laptop/skds/cad-ai-project/fastapi-be/.venv/bin/python3.13 -m pip install 'langgraph>=0.3.0' 'langchain-core>=0.3.0' 'langchain-anthropic>=0.3.0' 'langchain-groq>=0.2.0' -q)",
+      "Bash(/home/akash-kumar/Desktop/laptop/skds/cad-ai-project/fastapi-be/.venv/bin/python3.13 *)",
+      "Read(//home/akash-kumar/Desktop/laptop/skds/kalpi-ai/**)",
+      "Read(//home/akash-kumar/Desktop/laptop/skds/**)",
+      "Bash(node_modules/.bin/tsc --noEmit --project tsconfig.json)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(node_modules/.bin/next build *)",
+      "Bash(node_modules/.bin/next --version)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('next:', p.dependencies.next, 'recharts:', p.dependencies.recharts\\)\")",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npx next *)",
+      "Bash(PYTHONPATH=api_service .venv/bin/python3.13 -c ' *)",
+      "Bash(PYTHONPATH=/home/akash-kumar/Desktop/laptop/skds/kalpi-ai/fastapi-be/api_service /home/akash-kumar/Desktop/laptop/skds/cad-ai-project/fastapi-be/.venv/bin/python3.13 *)",
+      "Bash(xargs ls -la)",
+      "Bash(python3 *)",
+      "Bash(bash *)",
+      "Bash(python -c ' *)",
+      "Bash(npm run *)",
+      "Bash(npx --prefix /home/akash-kumar/Desktop/laptop/skds/kalpi-ai/kalpi-fe tsc --noEmit)"
+    ]
+  }
+}

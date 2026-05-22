@@ -1,6 +1,6 @@
 # Kalpi AI — Full-Stack Portfolio Intelligence Platform
 
-One-command local deployment for the complete Kalpi AI stack: Next.js frontend, FastAPI analytics service, Flask auth service, PostgreSQL, MongoDB, and Nginx — all wired together via Docker Compose.
+One-command local deployment for the complete Kalpi AI stack: Next.js frontend and FastAPI analytics service wired together via Docker Compose. MongoDB Atlas is hosted remotely — no local database containers needed.
 
 ---
 
@@ -9,30 +9,33 @@ One-command local deployment for the complete Kalpi AI stack: Next.js frontend, 
 ```
 Browser
   │
-  ▼ port 80
-┌─────────────────────────────────────┐
-│           Nginx (gateway)           │
-│  /          → frontend:3000         │
-│  /api/      → api-service:8000      │
-│  /auth/     → auth-service:5000     │
-└──────────┬──────────┬───────────────┘
-           │          │
-    ┌──────▼──┐  ┌────▼──────┐
-    │FastAPI  │  │Flask Auth │
-    │(Python) │  │(Python)   │
-    └──────┬──┘  └────┬──────┘
-           │          │
-    ┌──────▼──┐  ┌────▼──────┐
-    │ MongoDB │  │PostgreSQL │
-    │(volume) │  │(volume)   │
-    └─────────┘  └───────────┘
-
-    ┌─────────────┐
-    │ Next.js 15  │  (built and served inside Docker)
-    └─────────────┘
+  ├── port 3000
+  │   ┌───────────────────┐
+  │   │   Next.js 15      │
+  │   │   (Frontend)      │
+  │   └────────┬──────────┘
+  │             │ HTTP requests (NEXT_PUBLIC_API_BASE_URL)
+  │             ▼
+  └── port 8000
+      ┌───────────────────┐
+      │   FastAPI          │
+      │   (api-service)    │
+      └────────┬───────────┘
+               │
+      ┌────────┴──────────────────────┐
+      │                               │
+ ┌────▼──────┐                 ┌──────▼──────┐
+ │ MongoDB   │                 │  Groq /     │
+ │ Atlas     │                 │  Gemini AI  │
+ │ (remote)  │                 └─────────────┘
+ └───────────┘
+ portfolios +
+ chat_sessions
 ```
 
-All services communicate over an internal Docker bridge network (`kalpi-net`). Only Nginx is exposed to the host on port 80.
+Two containers start locally:
+- **api-service** → http://localhost:8000
+- **frontend** → http://localhost:3000
 
 ---
 
@@ -100,15 +103,10 @@ Open `.env` in any text editor and fill in the values marked `CHANGE_ME`:
 
 | Variable | What it is |
 |---|---|
-| `SECRET_KEY` / `JWT_SECRET` | Random strings ≥ 32 chars. Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `POSTGRES_PASSWORD` | Pick any strong password. Also update `DATABASE_URL` to match. |
-| `GROQ_API_KEY` | Free key from https://console.groq.com |
-| `GEMINI_API_KEY` | Free key from https://aistudio.google.com/apikey |
+| `GROQ_API_KEY` | Free key from https://console.groq.com (default LLM provider) |
+| `GEMINI_API_KEY` | Free key from https://aistudio.google.com/apikey (optional, if switching to Gemini) |
 
-Everything else works out of the box for local development.
-
-> **If port 80 is already in use** on your machine, set `NGINX_PORT=8080` in `.env`
-> and also set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8080`.
+Everything else works out of the box for local development — databases are pre-configured and hosted remotely.
 
 ### 3. Build and start everything
 
@@ -122,20 +120,17 @@ The first build downloads base images and installs all dependencies — this typ
 
 | Service | URL |
 |---|---|
-| **Kalpi AI App** | http://localhost |
-| FastAPI interactive docs | http://localhost/api/docs |
-| FastAPI redoc | http://localhost/api/redoc |
+| **Kalpi AI App** | http://localhost:3000 |
+| FastAPI interactive docs | http://localhost:8000/docs |
+| FastAPI redoc | http://localhost:8000/redoc |
 
 ---
 
 ## Day-to-day commands
 
 ```bash
-# Stop all containers (volumes and data are preserved)
+# Stop all containers (data is preserved on remote DBs)
 docker compose down
-
-# Stop and delete all data (full reset)
-docker compose down -v
 
 # Rebuild a single service after code changes
 docker compose up --build api-service
@@ -150,22 +145,18 @@ docker compose logs -f api-service
 
 ---
 
-## Switching to Cloud Databases
+## Environment Variables
 
-The default `.env` uses local Docker containers for PostgreSQL and MongoDB. To switch to hosted databases (Railway, Supabase, MongoDB Atlas, etc.):
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `GROQ_API_KEY` | ✅ | — | Groq API key for LLM (portfolio chat AI) |
+| `GEMINI_API_KEY` | Optional | — | Gemini API key (only needed if `LLM_PROVIDER=gemini`) |
+| `LLM_PROVIDER` | Optional | `groq` | AI provider: `groq` or `gemini` |
+| `GROQ_MODEL` | Optional | `llama-3.3-70b-versatile` | Groq model to use |
+| `NEXT_PUBLIC_API_BASE_URL` | Optional | `http://localhost:8000` | URL the browser uses to reach the API |
+| `ENV_MODE` | Optional | `production` | App environment mode |
 
-1. Replace the database URLs in `.env`:
-   ```env
-   # PostgreSQL — paste your full connection string
-   DATABASE_URL=postgresql://user:pass@your-host:port/dbname
-
-   # MongoDB — paste your Atlas SRV string
-   MONGO_URL=mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/
-   ```
-
-2. Comment out or remove the `postgres` and `mongo` service blocks in `docker-compose.yml` (the application services will connect to the external URLs directly).
-
-3. Rebuild: `docker compose up --build`
+> The MongoDB Atlas URL is pre-configured in `docker-compose.yml` and works out of the box.
 
 ---
 
@@ -173,17 +164,26 @@ The default `.env` uses local Docker containers for PostgreSQL and MongoDB. To s
 
 ```
 kalpi-ai/
-├── docker-compose.yml          ← root compose file (single command to run everything)
+├── docker-compose.yml          ← root compose file (two services: api + frontend)
 ├── .env                        ← your secrets (never commit this file)
 ├── .env.example                ← safe template to copy
-├── nginx/
-│   └── nginx.conf              ← request routing: browser → nginx → services
 ├── fastapi-be/
-│   ├── auth_service/           ← Flask OTP auth (internal port 5000)
-│   │   └── Dockerfile
-│   └── api_service/            ← FastAPI portfolio analytics (internal port 8000)
-│       └── Dockerfile
-└── kalpi-fe/                   ← Next.js 15 frontend (internal port 3000)
+│   └── api_service/            ← FastAPI portfolio analytics (port 8000)
+│       ├── main.py             ← app entry point
+│       ├── requirements.txt
+│       ├── Dockerfile
+│       ├── app/
+│       │   └── v1/
+│       │       ├── portfolio/  ← upload.py (CSV analysis), chat.py (AI Q&A)
+│       │       └── products/   ← CRUD endpoints
+│       ├── core/               ← database connection, config, middleware
+│       ├── schemas/            ← Pydantic request/response models
+│       └── services/           ← portfolio_analyzer.py, storage.py
+└── kalpi-fe/                   ← Next.js 15 frontend (port 3000)
+    ├── src/
+    │   ├── app/                ← Next.js App Router pages
+    │   ├── server/             ← tRPC server-side logic
+    │   └── trpc/               ← tRPC client integration
     ├── Dockerfile
     └── .dockerignore
 ```
@@ -193,16 +193,16 @@ kalpi-ai/
 ## Troubleshooting
 
 **`port is already allocated` error**
-Another process is using port 80. Set `NGINX_PORT=8080` in `.env` and `NEXT_PUBLIC_API_BASE_URL=http://localhost:8080`, then rebuild: `docker compose up --build frontend nginx`.
+Another process is using port 8000 or 3000. Update the `ports` mapping in `docker-compose.yml`, set `NEXT_PUBLIC_API_BASE_URL` to the new API port in `.env`, then rebuild: `docker compose up --build`.
 
 **Frontend shows blank page or API 404 errors**
-`NEXT_PUBLIC_API_BASE_URL` is baked into the JS bundle at build time. If you changed `NGINX_PORT`, this value must match. Rebuild the frontend: `docker compose up --build frontend`.
+`NEXT_PUBLIC_API_BASE_URL` is baked into the JS bundle at build time. If you changed the API port, this value must match. Rebuild the frontend: `docker compose up --build frontend`.
 
-**`exec /usr/local/bin/mongosh: no such file or directory`**
-Your local Docker image cache has a stale Mongo image. Run `docker pull mongo:6.0` then `docker compose up --build`.
-
-**Database errors on first start**
-The Flask auth service runs `db.create_all()` at startup. If you see SQLAlchemy connection errors, check that `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` in `.env` match the values in `DATABASE_URL` exactly, and that the `postgres` healthcheck has passed before `auth-service` starts (watch `docker compose logs postgres`).
+**API returns 500 errors on startup**
+The API service connects to remote databases at startup. Check your network connection and verify you can reach MongoDB Atlas and Railway from your machine.
 
 **Windows: `docker: command not found` in PowerShell**
 Docker Desktop may still be starting. Check the system tray for the whale icon and wait until it shows "Docker Desktop is running", then retry.
+
+**AI chat returns errors**
+Ensure `GROQ_API_KEY` (or `GEMINI_API_KEY` if using Gemini) is set correctly in `.env`. Verify the key is active at https://console.groq.com.

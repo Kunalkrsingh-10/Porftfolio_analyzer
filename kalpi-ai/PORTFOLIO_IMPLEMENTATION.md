@@ -61,8 +61,7 @@ metrics = PortfolioAnalyzer.analyze_portfolio(portfolio_df)
 **Example Request:**
 ```bash
 curl -X POST http://localhost:8000/api/v1/portfolio/upload \
-  -F "file=@portfolio.csv" \
-  -H "Authorization: Bearer <token>"
+  -F "file=@portfolio.csv"
 ```
 
 **Example CSV:**
@@ -215,16 +214,17 @@ pip install -r requirements.txt
 Add to `.env` file:
 
 ```env
-# Google Gemini API
-GOOGLE_GEMINI_API_KEY=your-api-key-here
+# LLM / AI
+LLM_PROVIDER=groq
+GROQ_API_KEY=your-groq-api-key-here
+GROQ_MODEL=llama-3.3-70b-versatile
 
-# MongoDB
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=vastukart_db
+# Google Gemini (optional — only if LLM_PROVIDER=gemini)
+GEMINI_API_KEY=your-gemini-api-key-here
 
-# JWT
-JWT_SECRET=your-secret-key-here
-JWT_ALGORITHM=HS256
+# MongoDB (pre-configured in docker-compose.yml)
+MONGO_URL=mongodb+srv://<user>:<pass>@cluster0.xxxxx.mongodb.net/
+DB_NAME=kalpi_ai_api_db
 
 # CORS
 CORS_ORIGINS=http://localhost:3000
@@ -246,8 +246,7 @@ EOF
 
 # Upload
 curl -X POST http://localhost:8000/api/v1/portfolio/upload \
-  -F "file=@portfolio.csv" \
-  -H "Authorization: Bearer $JWT_TOKEN"
+  -F "file=@portfolio.csv"
 
 # Response includes session_id
 ```
@@ -256,7 +255,6 @@ curl -X POST http://localhost:8000/api/v1/portfolio/upload \
 ```bash
 curl -X POST http://localhost:8000/api/v1/portfolio/chat \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $JWT_TOKEN" \
   -d '{
     "session_id": "abc-123-def-456",
     "user_message": "What is my portfolio risk profile?"
@@ -352,8 +350,7 @@ df.to_csv('/tmp/test_portfolio.csv', index=False)
 files = {'file': open('/tmp/test_portfolio.csv', 'rb')}
 response = requests.post(
     'http://localhost:8000/api/v1/portfolio/upload',
-    files=files,
-    headers={'Authorization': 'Bearer test-token'}
+    files=files
 )
 print(response.json())
 "

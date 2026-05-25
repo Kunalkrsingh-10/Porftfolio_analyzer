@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+
+# Environment files
+.env
+.env.*
+
+# Docker
+*.log
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+.qodo

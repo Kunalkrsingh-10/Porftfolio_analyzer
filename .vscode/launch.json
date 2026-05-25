@@ -1,20 +1,54 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        
+  "version": "0.2.0",
+  "configurations": [
+    // ── FastAPI (Docker debugpy on port 5679) ──────────────────────────────
+    {
+      "name": "Attach FastAPI Debug",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5679
+      },
+      "pathMappings": [
         {
-            "name": "Python Debugger: FastAPI",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "args": [
-                "main:app",
-                "--reload"
-            ],
-            "jinja": true
+          "localRoot": "${workspaceFolder}/fastapi-be/api_service",
+          "remoteRoot": "/app"
         }
-    ]
+      ],
+      "justMyCode": true,
+      "preLaunchTask": "Docker: Debug Backend"
+    },
+    // ── Next.js frontend (local dev server) ───────────────────────────────
+    {
+      "name": "Launch Frontend (kalpi-fe)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/kalpi-fe",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "console": "integratedTerminal"
+    },
+    // ── Smoke-test script ─────────────────────────────────────────────────
+    {
+      "name": "Run API Smoke-test",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/fastapi-be/test_gemini.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack Debug",
+      "configurations": [
+        "Attach FastAPI Debug",
+        "Launch Frontend (kalpi-fe)"
+      ]
+    }
+  ]
 }

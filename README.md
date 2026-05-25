@@ -190,19 +190,3 @@ kalpi-ai/
 
 ---
 
-## Troubleshooting
-
-**`port is already allocated` error**
-Another process is using port 8000 or 3000. Update the `ports` mapping in `docker-compose.yml`, set `NEXT_PUBLIC_API_BASE_URL` to the new API port in `.env`, then rebuild: `docker compose up --build`.
-
-**Frontend shows blank page or API 404 errors**
-`NEXT_PUBLIC_API_BASE_URL` is baked into the JS bundle at build time. If you changed the API port, this value must match. Rebuild the frontend: `docker compose up --build frontend`.
-
-**API returns 500 errors on startup**
-The API service connects to remote databases at startup. Check your network connection and verify you can reach MongoDB Atlas and Railway from your machine.
-
-**Windows: `docker: command not found` in PowerShell**
-Docker Desktop may still be starting. Check the system tray for the whale icon and wait until it shows "Docker Desktop is running", then retry.
-
-**AI chat returns errors**
-Ensure `GROQ_API_KEY` (or `GEMINI_API_KEY` if using Gemini) is set correctly in `.env`. Verify the key is active at https://console.groq.com.

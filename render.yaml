@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: kalpi-ai-backend
+    runtime: docker
+    dockerfilePath: ./fastapi-be/api_service/Dockerfile
+    dockerContext: ./fastapi-be/api_service
+    envVars:
+      # ── Secrets — set these in the Render dashboard, NOT here ─────────────
+      - key: MONGO_URL
+        sync: false          # mongodb+srv://... Atlas connection string
+      - key: GROQ_API_KEY
+        sync: false          # gsk_... from console.groq.com
+      - key: CORS_ORIGINS
+        sync: false          # https://your-app.vercel.app  (set after Vercel deploy)
+
+      # ── Non-secret config ─────────────────────────────────────────────────
+      - key: DB_NAME
+        value: kalpi_ai_api_db
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: ENV_MODE
+        value: production
+      - key: STORAGE_TYPE
+        value: local

@@ -6,7 +6,12 @@ On every upload the analyzer:
   1. Fetches the real current price for each ticker via yfinance (.NS suffix).
   2. Fetches the sector/industry label from yfinance Ticker.info when the CSV
      does not supply one.
-  3. Computes all metrics using the live price as current_price.
+  3. Fetches full split-adjusted price history per ticker to compute a correct
+     adj_purchase_price and adj_return_pct for each holding — this prevents
+     stock splits (e.g. NESTLEIND 10:1, Oct 2024) from showing fake -90%+ losses
+     when the CSV holds a pre-split purchase price.
+  4. Computes all metrics using the adjusted prices so return_pct, pnl,
+     portfolio_value, sharpe, drawdown, and VaR are all split-correct.
 
 Falls back to the CSV price column if yfinance returns no data for a ticker,
 logging a warning so the operator knows which tickers need attention.
@@ -62,6 +67,67 @@ def _fetch_live_price(ticker: str, exchange_suffix: str = _NSE_SUFFIX) -> Option
         return None
 
 
+def _fetch_price_history(
+    ticker: str,
+    start_date: pd.Timestamp,
+    exchange_suffix: str = _NSE_SUFFIX,
+) -> Optional[pd.Series]:
+    """
+    Fetch the full split-adjusted close price series for *ticker* from
+    *start_date* to today (auto_adjust=True so every historical bar is
+    back-filled to the current share structure after splits/bonuses).
+
+    Returns a timezone-naive pd.Series indexed by date, or None on failure.
+
+    Why this matters
+    ----------------
+    yfinance's auto_adjust=True always returns prices in today's share
+    structure.  E.g. after NESTLEIND's 10:1 split (Oct 2024) the pre-split
+    bars are shown at 1/10th of the original price.  This function gives us
+    the adjusted price *at the purchase date*, which we compare against the
+    adjusted current price to get a split-correct % return.
+    """
+    symbol = _yf_symbol(ticker, exchange_suffix)
+    try:
+        # Go 7 days before start_date to capture the nearest trading day
+        start_str = (start_date - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        hist = yf.Ticker(symbol).history(start=start_str, auto_adjust=True)
+        if hist.empty:
+            return None
+        close = hist["Close"].dropna()
+        if close.empty:
+            return None
+        # Normalise to timezone-naive date index for safe comparison
+        if close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        return close
+    except Exception as exc:
+        logger.warning("_fetch_price_history error for '%s': %s", symbol, exc)
+        return None
+
+
+def _lookup_adjusted_price(
+    price_series: pd.Series,
+    target_date: pd.Timestamp,
+) -> Optional[float]:
+    """
+    Return the split-adjusted close on or just before *target_date* from a
+    pre-fetched *price_series*.  Returns None when no bar is found within the
+    series (e.g. purchase date pre-dates available history).
+    """
+    try:
+        target = (
+            target_date.tz_localize(None)
+            if target_date.tzinfo is not None
+            else target_date
+        )
+        eligible = price_series[price_series.index <= target + pd.Timedelta(days=1)]
+        return float(eligible.iloc[-1]) if not eligible.empty else None
+    except Exception as exc:
+        logger.debug("_lookup_adjusted_price error: %s", exc)
+        return None
+
+
 def _fetch_sector(ticker: str, exchange_suffix: str = _NSE_SUFFIX) -> Optional[str]:
     """
     Fetch sector from yfinance Ticker.info.
@@ -81,15 +147,22 @@ def _enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     For every row in the normalised DataFrame:
       - Replace current_price with the live yfinance price (if available).
       - Fill missing sector from yfinance Ticker.info (if available).
+      - Compute adj_purchase_price: the split-adjusted price on the purchase
+        date from yfinance history.  Both current_price and adj_purchase_price
+        are on the same post-split basis, so their ratio gives a correct
+        return even when a stock split happened between purchase and today.
+      - Compute adj_return_pct = (current / adj_purchase - 1) × 100.
 
-    Runs one yf.Ticker call per ticker; tolerates partial failures gracefully.
+    One yf.Ticker / history call per ticker; tolerates partial failures.
     """
     df = df.copy()
     unique_tickers = df["ticker"].unique().tolist()
     live_prices: dict[str, float] = {}
     live_sectors: dict[str, str] = {}
+    price_histories: dict[str, pd.Series] = {}   # adj price history per ticker
 
     for ticker in unique_tickers:
+        # ── 1. Live (current) price ───────────────────────────────────────────
         price = _fetch_live_price(ticker)
         if price is not None:
             live_prices[ticker] = price
@@ -98,13 +171,29 @@ def _enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
                 "No live price for '%s' — falling back to CSV price column.", ticker
             )
 
-        # Only fetch sector if the CSV didn't supply one
+        # ── 2. Full split-adjusted history (one call per ticker) ──────────────
+        ticker_rows = df[df["ticker"] == ticker]
+        try:
+            earliest = pd.to_datetime(ticker_rows["purchase_date"]).min()
+            hist = _fetch_price_history(ticker, earliest)
+            if hist is not None and not hist.empty:
+                price_histories[ticker] = hist
+                logger.debug(
+                    "Price history for '%s': %d bars from %s",
+                    ticker, len(hist), hist.index[0].date(),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Could not fetch price history for '%s': %s", ticker, exc
+            )
+
+        # ── 3. Sector (only when CSV didn't supply one) ───────────────────────
         if df.loc[df["ticker"] == ticker, "sector"].iloc[0] in ("Other", "", "other"):
             sector = _fetch_sector(ticker)
             if sector:
                 live_sectors[ticker] = sector
 
-    # Vectorised update
+    # ── Vectorised updates ────────────────────────────────────────────────────
     df["current_price"] = df.apply(
         lambda row: live_prices.get(row["ticker"], row["current_price"]),
         axis=1,
@@ -114,11 +203,38 @@ def _enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
 
-    fetched = len(live_prices)
-    total = len(unique_tickers)
+    # adj_purchase_price: split-adjusted price on the purchase date.
+    # Falls back to the raw CSV price when history is unavailable so existing
+    # behaviour is preserved for tickers where yfinance has no data.
+    def _adj_purchase(row: pd.Series) -> float:
+        hist = price_histories.get(row["ticker"])
+        if hist is None or hist.empty:
+            return float(row["price"])   # fallback: raw CSV price
+        purchase_date = pd.Timestamp(row["purchase_date"])
+        adj = _lookup_adjusted_price(hist, purchase_date)
+        if adj is None or adj <= 0:
+            return float(row["price"])   # fallback: raw CSV price
+        return float(adj)
+
+    df["adj_purchase_price"] = df.apply(_adj_purchase, axis=1)
+
+    # adj_return_pct = (current_price / adj_purchase_price − 1) × 100
+    # This is split-correct: both prices come from the same auto_adjust=True
+    # yfinance series (same share-structure basis).
+    df["adj_return_pct"] = df.apply(
+        lambda row: round(
+            (row["current_price"] / row["adj_purchase_price"] - 1) * 100, 2
+        ) if row["adj_purchase_price"] > 0 else 0.0,
+        axis=1,
+    )
+
+    fetched_prices   = len(live_prices)
+    fetched_hist     = len(price_histories)
+    total            = len(unique_tickers)
     logger.info(
-        "Live prices fetched: %d/%d tickers. Fallback (CSV price): %d tickers.",
-        fetched, total, total - fetched,
+        "Enrichment complete — live prices: %d/%d, price histories: %d/%d, "
+        "sector fallbacks: %d.",
+        fetched_prices, total, fetched_hist, total, total - fetched_prices,
     )
     return df
 
@@ -199,19 +315,34 @@ class PortfolioAnalyzer:
 
     @staticmethod
     def calculate_total_return(df: pd.DataFrame) -> float:
-        cost = (df["quantity"] * df["price"]).sum()
-        value = (df["quantity"] * df["current_price"]).sum()
-        if cost <= 0:
+        """
+        Split-correct portfolio total return.
+
+        Uses adj_return_pct (set by _enrich_dataframe) so a holding whose
+        stock split after purchase is not shown as a fake -90%+ loss.
+        Each holding is weighted by its share of total cost basis.
+        """
+        df = df.copy()
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        total_cost = df["purchase_cost"].sum()
+        if total_cost <= 0:
             return 0.0
-        return round(((value - cost) / cost) * 100, 2)
+        # Weighted average of adj_return_pct by cost basis
+        port_return = (df["adj_return_pct"] * df["purchase_cost"]).sum() / total_cost
+        return round(port_return, 2)
 
     @staticmethod
     def calculate_annualized_return(df: pd.DataFrame) -> float:
-        cost = (df["quantity"] * df["price"]).sum()
-        value = (df["quantity"] * df["current_price"]).sum()
-        if cost <= 0:
+        """Split-correct annualised return, weighted by cost basis."""
+        df = df.copy()
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        total_cost = df["purchase_cost"].sum()
+        if total_cost <= 0:
             return 0.0
-        total_return_dec = (value - cost) / cost
+        total_return_pct = (
+            (df["adj_return_pct"] * df["purchase_cost"]).sum() / total_cost
+        )
+        total_return_dec = total_return_pct / 100
         now = pd.Timestamp.now().tz_localize(None)
         dates = pd.to_datetime(df["purchase_date"]).dt.tz_localize(None)
         avg_days = float((now - dates).dt.days.mean())
@@ -227,51 +358,55 @@ class PortfolioAnalyzer:
         """
         Cross-sectional volatility proxy (annualised) — used only for the upload
         summary card.  The chat agent uses full time-series volatility via yfinance.
+        Uses adj_return_pct so stock splits don't inflate cross-sectional dispersion.
         """
         df = df.copy()
-        df["ret"] = (df["current_price"] - df["price"]) / df["price"]
-        df["val"] = df["quantity"] * df["current_price"]
-        total_val = df["val"].sum()
-        if total_val <= 0 or len(df) < 2:
+        df["ret"] = df["adj_return_pct"] / 100          # split-adjusted decimal return
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        total_cost = df["purchase_cost"].sum()
+        if total_cost <= 0 or len(df) < 2:
             return 0.0
-        df["w"] = df["val"] / total_val
+        df["w"] = df["purchase_cost"] / total_cost       # cost-basis weights
         w_ret = (df["ret"] * df["w"]).sum()
         variance = (df["w"] * (df["ret"] - w_ret) ** 2).sum()
         return round(float(np.sqrt(variance) * np.sqrt(TRADING_DAYS_PER_YEAR) * 100), 2)
 
     @staticmethod
     def calculate_sharpe_ratio(df: pd.DataFrame) -> float:
+        """Split-correct Sharpe — uses adj_return_pct and cost-basis weights."""
         df = df.copy()
-        df["ret_pct"] = ((df["current_price"] - df["price"]) / df["price"]) * 100
-        df["val"] = df["quantity"] * df["current_price"]
-        total_val = df["val"].sum()
-        if total_val <= 0:
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        total_cost = df["purchase_cost"].sum()
+        if total_cost <= 0:
             return 0.0
-        df["w"] = df["val"] / total_val
-        port_ret = (df["ret_pct"] * df["w"]).sum()
-        variance = (df["w"] ** 2 * df["ret_pct"] ** 2).sum()
+        df["w"] = df["purchase_cost"] / total_cost
+        port_ret = (df["adj_return_pct"] * df["w"]).sum()
+        variance = (df["w"] ** 2 * df["adj_return_pct"] ** 2).sum()
         std = float(np.sqrt(variance)) if variance > 0 else 0.0001
         return round((port_ret - RISK_FREE_RATE * 100) / std, 2)
 
     @staticmethod
     def calculate_max_drawdown(df: pd.DataFrame) -> float:
+        """
+        Worst individual-holding return in the portfolio (split-adjusted).
+        Uses adj_return_pct so a stock split doesn't masquerade as a -90% drawdown.
+        """
         df = df.copy()
-        df["dd"] = ((df["current_price"] - df["price"]) / df["price"]) * 100
-        mdd = df["dd"].min()
+        mdd = df["adj_return_pct"].min()
         return round(mdd, 2) if mdd < 0 else 0.0
 
     @staticmethod
     def calculate_var_95(df: pd.DataFrame) -> float:
+        """Split-correct cross-sectional VaR — 5th percentile of adj_return_pct."""
         df = df.copy()
-        df["ret"] = ((df["current_price"] - df["price"]) / df["price"]) * 100
-        df["val"] = df["quantity"] * df["current_price"]
-        total_val = df["val"].sum()
-        if total_val <= 0:
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        total_cost = df["purchase_cost"].sum()
+        if total_cost <= 0:
             return 0.0
-        df["w"] = df["val"] / total_val
+        df["w"] = df["purchase_cost"] / total_cost
         if len(df) < 2:
-            return round(float(df["ret"].min() * df["w"].max()), 2)
-        port_rets = (df["ret"] * df["w"]).values
+            return round(float(df["adj_return_pct"].min() * df["w"].max()), 2)
+        port_rets = (df["adj_return_pct"] * df["w"]).values
         return round(float(np.percentile(port_rets, 5)), 2)
 
     @staticmethod
@@ -308,12 +443,12 @@ class PortfolioAnalyzer:
 
     @staticmethod
     def calculate_win_rate(df: pd.DataFrame) -> Dict[str, Any]:
+        """Win / loss count using split-adjusted adj_return_pct."""
         df = df.copy()
-        df["ret"] = df["current_price"] - df["price"]
         total = len(df)
-        winners = int((df["ret"] > 0).sum())
-        losers = int((df["ret"] < 0).sum())
-        flat = total - winners - losers
+        winners = int((df["adj_return_pct"] > 0).sum())
+        losers  = int((df["adj_return_pct"] < 0).sum())
+        flat    = total - winners - losers
         return {
             "win_rate": round(winners / total * 100, 1) if total > 0 else 0.0,
             "winners": winners,
@@ -344,26 +479,36 @@ class PortfolioAnalyzer:
 
     @staticmethod
     def calculate_holdings_breakdown(df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Per-holding detail rows.
+
+        return_pct uses adj_return_pct (split-adjusted) so a 10:1 split does
+        not make a holding look like it lost 90%.
+        pnl / current_value are derived from the same adjusted return applied
+        to the actual cost basis (quantity × csv_price) so rupee figures are
+        also split-correct.
+        """
         df = df.copy()
         df["purchase_value"] = df["quantity"] * df["price"]
-        df["current_value"] = df["quantity"] * df["current_price"]
-        df["pnl"] = df["current_value"] - df["purchase_value"]
-        df["return_pct"] = ((df["current_price"] - df["price"]) / df["price"]) * 100
+        # Split-correct current value: cost_basis × (1 + adj_return)
+        df["current_value"] = df["purchase_value"] * (1 + df["adj_return_pct"] / 100)
+        df["pnl"]           = df["current_value"] - df["purchase_value"]
+        df["return_pct"]    = df["adj_return_pct"]          # already split-adjusted
         total_val = df["current_value"].sum()
         df["weight_pct"] = (df["current_value"] / total_val * 100) if total_val > 0 else 0.0
         df = df.sort_values("current_value", ascending=False)
         return [
             {
-                "ticker": str(r["ticker"]),
-                "sector": str(r.get("sector", "Other")),
-                "quantity": float(r["quantity"]),
+                "ticker":         str(r["ticker"]),
+                "sector":         str(r.get("sector", "Other")),
+                "quantity":       float(r["quantity"]),
                 "purchase_price": round(float(r["price"]), 2),
-                "current_price": round(float(r["current_price"]), 2),
+                "current_price":  round(float(r["current_price"]), 2),
                 "purchase_value": round(float(r["purchase_value"]), 2),
-                "current_value": round(float(r["current_value"]), 2),
-                "pnl": round(float(r["pnl"]), 2),
-                "return_pct": round(float(r["return_pct"]), 2),
-                "weight_pct": round(float(r["weight_pct"]), 2),
+                "current_value":  round(float(r["current_value"]), 2),
+                "pnl":            round(float(r["pnl"]), 2),
+                "return_pct":     round(float(r["return_pct"]), 2),
+                "weight_pct":     round(float(r["weight_pct"]), 2),
             }
             for _, r in df.iterrows()
         ]
@@ -372,27 +517,31 @@ class PortfolioAnalyzer:
     def calculate_top_performers(
         df: pd.DataFrame, top_n: int = 5
     ) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Top gainers and losers ranked by split-adjusted return (adj_return_pct).
+        P&L in ₹ is also derived from the adjusted return applied to cost basis.
+        """
         df = df.copy()
-        df["ret_pct"] = ((df["current_price"] - df["price"]) / df["price"]) * 100
-        df["pnl"] = (df["current_price"] - df["price"]) * df["quantity"]
-        df = df.sort_values("ret_pct", ascending=False)
+        df["purchase_cost"] = df["quantity"] * df["price"]
+        df["pnl"]           = df["purchase_cost"] * (df["adj_return_pct"] / 100)
+        df = df.sort_values("adj_return_pct", ascending=False)
         gainers = [
             {
-                "ticker": str(r["ticker"]),
-                "return_pct": round(float(r["ret_pct"]), 2),
-                "pnl": round(float(r["pnl"]), 2),
-                "sector": str(r.get("sector", "Other")),
+                "ticker":     str(r["ticker"]),
+                "return_pct": round(float(r["adj_return_pct"]), 2),
+                "pnl":        round(float(r["pnl"]), 2),
+                "sector":     str(r.get("sector", "Other")),
             }
             for _, r in df.head(top_n).iterrows()
         ]
         losers = [
             {
-                "ticker": str(r["ticker"]),
-                "return_pct": round(float(r["ret_pct"]), 2),
-                "pnl": round(float(r["pnl"]), 2),
-                "sector": str(r.get("sector", "Other")),
+                "ticker":     str(r["ticker"]),
+                "return_pct": round(float(r["adj_return_pct"]), 2),
+                "pnl":        round(float(r["pnl"]), 2),
+                "sector":     str(r.get("sector", "Other")),
             }
-            for _, r in df.tail(top_n).sort_values("ret_pct").iterrows()
+            for _, r in df.tail(top_n).sort_values("adj_return_pct").iterrows()
         ]
         return gainers, losers
 
@@ -454,8 +603,17 @@ class PortfolioAnalyzer:
         var_95 = PortfolioAnalyzer.calculate_var_95(df)
         volatility = PortfolioAnalyzer.calculate_portfolio_volatility(df)
         total_return = PortfolioAnalyzer.calculate_total_return(df)
-        portfolio_value = round(float((df["quantity"] * df["current_price"]).sum()), 2)
         cost_basis = PortfolioAnalyzer.calculate_cost_basis(df)
+        # Split-correct portfolio value: cost_basis × (1 + adj_return)
+        # Using raw quantity × current_price is wrong after a stock split because
+        # quantity in the CSV is pre-split (e.g. 1 share at ₹25 000) while
+        # current_price is post-split (e.g. ₹2 200 for 1/10th share).
+        portfolio_value = round(
+            float(
+                (df["quantity"] * df["price"] * (1 + df["adj_return_pct"] / 100)).sum()
+            ),
+            2,
+        )
 
         metrics: Dict[str, Any] = {
             # Core time-return metrics

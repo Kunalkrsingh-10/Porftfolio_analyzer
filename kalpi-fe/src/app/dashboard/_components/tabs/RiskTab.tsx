@@ -122,11 +122,12 @@ export default function RiskTab({ chartData, summary, agentPortfolio }: Props) {
                   text: `Max drawdown ${maxDD.toFixed(1)}% — significant drawdown risk in bear markets`,
                 }
             : null,
-          // Worst loser
+          // Worst loser — return_pct is now split-adjusted so this reflects
+          // true holding-period return, not a split artefact
           topLosers.length > 0
             ? {
                 type: "negative" as const,
-                text: `${topLosers[0]!.ticker} (${topLosers[0]!.return_pct.toFixed(1)}%) is the worst performing position`,
+                text: `${topLosers[0]!.ticker} (${topLosers[0]!.return_pct.toFixed(1)}%) is the worst return since purchase`,
               }
             : null,
         ].filter(Boolean) as { type: "positive" | "warning" | "negative"; text: string }[]

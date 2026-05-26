@@ -5,7 +5,10 @@ All values are read from environment variables so the same image runs
 in every environment (Docker, local, CI) without code changes.
 """
 
+import logging
 import os
+
+_cfg_logger = logging.getLogger("Config")
 
 
 class Config:
@@ -21,9 +24,17 @@ class Config:
             or os.environ.get("MONGO_URL")
         )
         if url:
+            # Log only the scheme+host, never credentials
+            safe = url.split("@")[-1] if "@" in url else url[:40]
+            _cfg_logger.info("🔗 [Config] MONGO target: %s", safe)
             return url
 
-        # Plain local fallback (used only when neither env var is set)
+        # ── Fallback — no Atlas URL set, using localhost ─────────────────────
+        _cfg_logger.warning(
+            "⚠️  [Config] MONGO_URL / MONGO_CONNECTION_STRING not set — "
+            "falling back to localhost:27017.  "
+            "Set MONGO_URL in your Railway/Render/Vercel dashboard."
+        )
         host = os.environ.get("MONGO_HOST", "localhost")
         port = os.environ.get("MONGO_PORT", "27017")
         user = os.environ.get("MONGO_USER", "")

@@ -1,11 +1,3 @@
-# fastapi
-# uvicorn[standard]
-# python-jose[cryptography]  
-# python-multipart
-# python-dotenv
-# pydantic
-# motor
-
 # --- Core Framework ---
 fastapi>=0.128.0,<1.0
 uvicorn[standard]>=0.27.0
@@ -13,25 +5,20 @@ uvicorn[standard]>=0.27.0
 # --- Database (MongoDB Async) ---
 motor>=3.6.1
 dnspython>=2.6.0          # Required for MongoDB SRV connections (Atlas etc.)
-pymongo[async]>=4.14.0
+pymongo>=4.14.0
 
 # --- Authentication & Security ---
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4    # Password Hashing ke liye
-python-multipart>=0.0.9   # Form Data / File Upload support
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
 
-# --- Validation & Settings ---
+# --- Validation ---
 pydantic>=2.12.5,<3.0
-pydantic-settings>=2.1.0  # Best practice for managing .env in FastAPI
-email-validator>=2.1.0    # Email format verify karne ke liye
+email-validator>=2.1.0
 
 # --- Utilities ---
 python-dotenv>=1.0.0
-httpx>=0.26.0             # Async HTTP Client (agar Auth service ko call karna ho)
-ezdxf>=1.1.0              # Required for CAD analysis
-openai>=1.0.0             # (Optional) if you still use OpenAI
-google-generativeai>=0.5.0       # ✅ Google Gemini API package
-debugpy>=1.8.1            # Required for VS Code Python attach debugging
+httpx>=0.26.0
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.40
@@ -39,5 +26,5 @@ yfinance>=0.2.40
 # --- LangGraph Agent ---
 langgraph>=0.3.0
 langchain-core>=0.3.0
-langchain-anthropic>=0.3.0   # Anthropic (default LLM)
-langchain-groq>=0.2.0        # Groq fallback LLM
+langchain-anthropic>=0.3.0
+langchain-groq>=0.2.0

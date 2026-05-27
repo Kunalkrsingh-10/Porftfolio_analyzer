@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 
 // FastAPI runs directly on port 8000 — no Nginx, no /api prefix.
-const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+const BACKEND_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 export const portfolioRouter = createTRPCRouter({
   chat: publicProcedure

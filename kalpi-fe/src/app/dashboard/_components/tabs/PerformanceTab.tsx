@@ -251,7 +251,7 @@ export default function PerformanceTab({ chartData, whatIfData, summary, agentPo
                   typeof v === "number" ? `${v.toFixed(2)}%` : String(v),
                   "Return",
                 ]}
-                labelFormatter={(label) => label}
+                labelFormatter={(label) => String(label)}
                 contentStyle={{
                   backgroundColor: "#0f172a",
                   border: "1px solid #1e293b",

@@ -64,14 +64,13 @@ export default function DashboardPage() {
     try {
       const yfExchange = ex === "NSE" ? "NS" : "BO";
       const yfPeriod   = PERIOD_TO_YF[p];
-      const data = await fetchChartData(items, yfExchange as "NS" | "BO", yfPeriod, 21);
+      const data = await fetchChartData(items, yfExchange, yfPeriod, 21);
       setChartData(data);
     } catch (err) {
       console.error("Chart data fetch failed:", err);
     } finally {
       setChartLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exchange, period]);
 
   const handleExchangeChange = useCallback((ex: Exchange) => {
@@ -186,7 +185,7 @@ export default function DashboardPage() {
       try {
         const yfExchange = exchange === "NSE" ? "NS" : "BO";
         const yfPeriod   = PERIOD_TO_YF[period];
-        const data = await fetchChartData(portfolio, yfExchange as "NS" | "BO", yfPeriod, 21);
+        const data = await fetchChartData(portfolio, yfExchange, yfPeriod, 21);
         setChartData(data);
       } catch { /* non-fatal */ }
       finally { setChartLoading(false); }

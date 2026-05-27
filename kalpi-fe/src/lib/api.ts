@@ -1,5 +1,3 @@
-/* eslint-disable */
-
 /**
  * API client — points directly at FastAPI (http://localhost:8000).
  * Nginx and authentication have been removed; no Bearer/Authorization

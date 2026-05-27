@@ -125,12 +125,12 @@ export default function HistorySidebar({
 
       const messages: ChatMessage[] = full.messages.map((m, i) => ({
         id: `hist-${session.session_id.slice(0, 8)}-${i}`,
-        role: m.role as "user" | "assistant",
+        role: m.role,
         content: m.content,
         timestamp: new Date(m.timestamp),
         triggeredTab:
           m.role === "assistant" && m.chart_type
-            ? (CHART_TYPE_TO_TAB[m.chart_type] as TabId | undefined)
+            ? CHART_TYPE_TO_TAB[m.chart_type]
             : undefined,
       }));
 

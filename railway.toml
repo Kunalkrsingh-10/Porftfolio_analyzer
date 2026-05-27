@@ -1,6 +1,6 @@
 [build]
 builder      = "DOCKERFILE"
-dockerfilePath = "fastapi-be/api_service/Dockerfile"
+dockerfilePath = "Dockerfile"
 buildContext   = "fastapi-be/api_service"
 
 [deploy]

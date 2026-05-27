@@ -1,10 +1,9 @@
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "fastapi-be/api_service/Dockerfile"
-buildContext   = "fastapi-be/api_service"
-
-[deploy]
-numReplicas         = 1
-restartPolicyType   = "ON_FAILURE"
-restartPolicyMaxRetries = 10
-healthcheckPath     = "/health"
+# Railway Deployment — Monorepo with 2 services
+#
+# Each service has its own railway.toml:
+#   Backend  → fastapi-be/api_service/railway.toml
+#   Frontend → kalpi-fe/railway.toml
+#
+# In Railway dashboard, set Root Directory per service:
+#   Backend service  → fastapi-be/api_service
+#   Frontend service → kalpi-fe

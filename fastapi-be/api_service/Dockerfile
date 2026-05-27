@@ -4,6 +4,14 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Install C build tools needed by: cryptography, bcrypt, ezdxf, pymongo
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --default-timeout=1000 --no-cache-dir \
     --trusted-host pypi.org --trusted-host files.pythonhosted.org \
